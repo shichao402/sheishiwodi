@@ -17,12 +17,13 @@ class SSWD {
 	private $openRtxObject = null;
 	private $current_uuid = null;
 	public function __construct() {
-		$this->openRtxObject = new OpenRtx();
-		$this->initGame();
+		//$this->openRtxObject = new OpenRtx();
+		//$this->initGame();
 	}
 
 	public function initGame() {
-		$this->current_uuid = $this->openRtxObject->getInputParams()['sender'];
+		$params = $this->openRtxObject->getInputParams();
+		$this->current_uuid = $params['sender'];
 		//获取会话信息
 		$action = "get_session_info";
 		$param = array();
@@ -149,71 +150,117 @@ class SSWD {
 		}
 	}
 
-	private function do($method, $args) {
-
+	private function action($method, $args) {
+		$return = array(
+			'result' => 0,
+			'data' => array(
+				1,
+				2,
+				3,
+			),
+		);
+		return json_encode($return);
 	}
+
 	public function run() {
 		$server = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
 		socket_set_option($server, SOL_SOCKET, SO_REUSEADDR, 1);
-		socket_bind($server, '127.0.0.1', 8080);
+		socket_set_nonblock($server);
+		socket_bind($server, '0.0.0.0', 80);
 		socket_listen($server);
-		$this->master = $server;
-		$this->sockets = array($this->master);
+		$buffer = null;
+		$connectionsInfo = array();
+		$connections = $reads = $writes = array();
 		while (true) {
-			$changes = $this->sockets;
-			socket_select($changes, $write = NULL, $except = NULL, NULL);
-			foreach ($changes as $sock) {
-				if ($sock == $this->master) {
-					$client = socket_accept($this->master);
-					//$key=uniqid();
-					$this->sockets[] = $client;
-					$this->users[] = array(
-						'socket' => $client,
-						'shou' => false,
-					);
-				} else {
-					$len = socket_recv($sock, $buffer, 2048, 0);
-					$found = false;
-					foreach ($this->users as $k => $v) {
-						if ($sock == $v['socket']) {
-							$found = true;
-							break;
+			$reads = $connections;
+			$reads[(int) $server] = $server;
+			if (socket_select($reads, $writes, $except = NULL, NULL)) {
+				foreach ($reads as $sockKey => $sock) {
+					if ($sock === $server) {
+						$client = socket_accept($server);
+						$clientKey = (int) $client;
+						$connections[$clientKey] = $client;
+						$connectionsInfo[$clientKey] = array(
+							'connected' => false,
+							'uuid' => '',
+						);
+						l("client {$clientKey} comming.");
+					} else {
+						$length = socket_recv($sock, $buffer, 2048, 0);
+						var_dump($length, decode($buffer));
+						$clientKey = (int) $sock;
+						l("client {$clientKey} selected.");
+						if ($length < 10) {
+							l("client {$clientKey} length < 10.");
+							socket_close($sock);
+							unset($connectionsInfo[$clientKey], $connections[$clientKey]);
+							continue;
+						}
+						//记录连接建立
+						if ($connectionsInfo[$clientKey]['connected'] === false) {
+							$buf = substr($buffer, strpos($buffer, 'Sec-WebSocket-Key:') + 18);
+							$key = trim(substr($buf, 0, strpos($buf, "\r\n")));
+							$new_key = base64_encode(sha1($key . "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", true));
+							$new_message = "HTTP/1.1 101 Switching Protocols\r\n";
+							$new_message .= "Upgrade: websocket\r\n";
+							$new_message .= "Sec-WebSocket-Version: 13\r\n";
+							$new_message .= "Connection: Upgrade\r\n";
+							$new_message .= "Sec-WebSocket-Accept: " . $new_key . "\r\n\r\n";
+							socket_write($sock, $new_message, strlen($new_message));
+							$connectionsInfo[$clientKey]['connected'] = true;
+							l("client {$clientKey} connected.");
+							continue;
+						} elseif ($connectionsInfo[$clientKey]['connected'] === true) {
+							l("client {$clientKey} reading.");
+							// $data = json_decode($buffer, true);
+							// // if ($data === false) {
+							// // 	socket_close($sock);
+							// // 	unset($reads[$sockKey]);
+							// // 	unset($connections[$clientKey]);
+							// // 	l("client {$clientKey} data decode failed.");
+							// // }
+							@$result = $this->action($data['method'], $data['params']);
+							$result = json_encode($result);
+							$result = encode($result);
+							var_dump($connections);
+							socket_write($sock, $result, strlen($result));
 						}
 					}
-					if ($found == false) {
-						$k = false;
-					}
-					//用户断开
-					if ($len < 7) {
-						$name = $this->users[$k]['ming'];
-						$k = array_search($sock, $this->sockets);
-						socket_close($sock);
-						unset($this->sockets[$k]);
-						unset($this->users[$k]);
-						$this->send2($name, $k);
-						continue;
-					}
-
-					if (!$this->users[$k]['shou']) {
-						//初始化连接
-						$buf = substr($buffer, strpos($buffer, 'Sec-WebSocket-Key:') + 18);
-						$key = trim(substr($buf, 0, strpos($buf, "\r\n")));
-						$new_key = base64_encode(sha1($key . "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", true));
-						$new_message = "HTTP/1.1 101 Switching Protocols\r\n";
-						$new_message .= "Upgrade: websocket\r\n";
-						$new_message .= "Sec-WebSocket-Version: 13\r\n";
-						$new_message .= "Connection: Upgrade\r\n";
-						$new_message .= "Sec-WebSocket-Accept: " . $new_key . "\r\n\r\n";
-						socket_write($this->users[$k]['socket'], $new_message, strlen($new_message));
-						$this->users[$k]['shou'] = true;
-					} else {
-						//发送消息
-						$buffer = $this->uncode($buffer);
-						$this->send($k, $buffer);
-					}
+				}
+				foreach ($writes as $sockKey => $sock) {
+					//socket_write($sock, $result, strlen($result));
 				}
 			}
-
 		}
+	}
+}
+function l($a) {
+	echo $a . "\n";
+}
+
+function decode($frame) {
+	$len = ord($frame[1]) & 127;
+	if ($len === 126) {
+		$ofs = 8;
+	} elseif ($len === 127) {
+		$ofs = 14;
+	} else {
+		$ofs = 6;
+	}
+	$text = '';
+	for ($i = $ofs; $i < strlen($frame); $i++) {
+		$text .= $frame[$i] ^ $frame[$ofs - 4 + ($i - $ofs) % 4];
+	}
+	return $text;
+}
+function encode($text) {
+	$b = 129;
+	$len = strlen($text);
+	if ($len < 126) {
+		return pack('CC', $b, $len) . $text;
+	} elseif ($len < 65536) {
+		return pack('CCn', $b, 126, $len) . $text;
+	} else {
+		return pack('CCNN', $b, 127, 0, $len) . $text;
 	}
 }

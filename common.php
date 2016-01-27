@@ -1,4 +1,5 @@
 <?php
+define('TMP', '.');
 class InjectBase {
 	private $map = array();
 	private static $singleton = null;
@@ -33,7 +34,8 @@ class OpenRtx {
 	//private $host = "rtxsdk.oa.tencent.com:18810";
 
 	public function __construct() {
-		//InjectBase::getInstance()->inject($this, new NetworkService(), 'networkService');
+		$this->genAuth();
+		$this->client_ip = NetworkService::getServerIP();
 	}
 
 	private function genAuth() {
@@ -45,18 +47,20 @@ class OpenRtx {
 	}
 
 	public function getInputParams() {
-		return $this->inputParams
+		$this->inputParams['sender'] = 'testsender';
+		$this->inputParams['request_token'] = 'testrequest_token';
+		return $this->inputParams;
 	}
 
 	public function request($action, $param) {
-		$this->request_token = $_GET['request_token'];
-		$this->inputParams = $_GET;
+		@$this->request_token = $_GET['request_token'];
+		@$this->inputParams = $_GET;
 
 		$access_token = file_get_contents("access_token");
 		$req = array(
-			'appid' => $appid,
-			'auth' => $auth,
-			'client_ip' => $client_ip,
+			'appid' => $this->appid,
+			'auth' => $this->auth,
+			'client_ip' => $this->client_ip,
 			'access_token' => $access_token,
 		);
 		$req = array_merge($req, $_GET);
@@ -76,9 +80,6 @@ class OpenRtx {
 	}
 
 	public function init() {
-		$this->genAuth();
-		$this->client_ip = NetworkService::getServerIP();
-
 		$req = array(
 			'appid' => $this->appid,
 			'auth' => $this->auth,
@@ -93,6 +94,7 @@ class OpenRtx {
 			file_put_contents("access_token", $result["access_token"]);
 			return true;
 		} else {
+			file_put_contents("access_token", "");
 			return false;
 		}
 	}
