@@ -153,6 +153,7 @@ class SSWD {
 	private function action($method, $args) {
 		$return = array(
 			'result' => 0,
+			'method' => 0,
 			'data' => array(
 				1,
 				2,
@@ -165,7 +166,10 @@ class SSWD {
 	public function run() {
 		$server = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
 		socket_set_option($server, SOL_SOCKET, SO_REUSEADDR, 1);
+		//socket_set_option($server, SOL_SOCKET, SO_KEEPALIVE, 1);
 		socket_set_nonblock($server);
+		socket_set_option($server, SOL_SOCKET, SO_RCVTIMEO, array('sec' => 3, 'usec' => 0));
+		socket_set_option($server, SOL_SOCKET, SO_SNDTIMEO, array('sec' => 3, 'usec' => 0));
 		socket_bind($server, '0.0.0.0', 80);
 		socket_listen($server);
 		$buffer = null;
@@ -173,8 +177,15 @@ class SSWD {
 		$connections = $reads = $writes = array();
 		while (true) {
 			$reads = $connections;
+			//$writes = $connections;
 			$reads[(int) $server] = $server;
-			if (socket_select($reads, $writes, $except = NULL, NULL)) {
+			echo "loop..\n";
+			$error = socket_select($reads, $writes, $except = NULL, 3);
+			$errorcode = socket_last_error();
+			$errormsg = socket_strerror($errorcode);
+			var_dump($error, $errorcode, $errormsg, $except);
+			if ($error) {
+				var_dump(empty($reads), empty($writes));
 				foreach ($reads as $sockKey => $sock) {
 					if ($sock === $server) {
 						$client = socket_accept($server);
@@ -183,21 +194,32 @@ class SSWD {
 						$connectionsInfo[$clientKey] = array(
 							'connected' => false,
 							'uuid' => '',
+							'lastlifetime' => time(),
 						);
 						l("client {$clientKey} comming.");
 					} else {
 						$length = socket_recv($sock, $buffer, 2048, 0);
-						var_dump($length, decode($buffer));
 						$clientKey = (int) $sock;
-						l("client {$clientKey} selected.");
-						if ($length < 10) {
-							l("client {$clientKey} length < 10.");
+						l("client {$clientKey} selected. length = {$length}");
+						if ($length < 7) {
+							l("client {$clientKey} length < 7.");
 							socket_close($sock);
 							unset($connectionsInfo[$clientKey], $connections[$clientKey]);
 							continue;
 						}
+
+						if (time() - $connectionsInfo[$clientKey]['lastlifetime'] > 30) {
+							l("client {$clientKey} lifetime > 30.");
+							socket_close($sock);
+							unset($connectionsInfo[$clientKey], $connections[$clientKey]);
+							continue;
+						} else {
+							$connectionsInfo[$clientKey]['lastlifetime'] = time();
+						}
 						//记录连接建立
 						if ($connectionsInfo[$clientKey]['connected'] === false) {
+							l("client {$clientKey} connected.");
+							var_dump($buffer);
 							$buf = substr($buffer, strpos($buffer, 'Sec-WebSocket-Key:') + 18);
 							$key = trim(substr($buf, 0, strpos($buf, "\r\n")));
 							$new_key = base64_encode(sha1($key . "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", true));
@@ -208,26 +230,31 @@ class SSWD {
 							$new_message .= "Sec-WebSocket-Accept: " . $new_key . "\r\n\r\n";
 							socket_write($sock, $new_message, strlen($new_message));
 							$connectionsInfo[$clientKey]['connected'] = true;
-							l("client {$clientKey} connected.");
 							continue;
 						} elseif ($connectionsInfo[$clientKey]['connected'] === true) {
 							l("client {$clientKey} reading.");
-							// $data = json_decode($buffer, true);
-							// // if ($data === false) {
-							// // 	socket_close($sock);
-							// // 	unset($reads[$sockKey]);
-							// // 	unset($connections[$clientKey]);
-							// // 	l("client {$clientKey} data decode failed.");
-							// // }
-							@$result = $this->action($data['method'], $data['params']);
-							$result = json_encode($result);
+							$data = json_decode(decode($buffer), true);
+							var_dump($data);
+							if ($data === false) {
+								l("client {$clientKey} data decode failed.");
+								continue;
+							}
+							if ($data['method'] === 0) {
+								$result = json_encode(array('method' => 0, 'params' => array()));
+							} else {
+								$result = $this->action($data['method'], $data['params']);
+							}
 							$result = encode($result);
-							var_dump($connections);
 							socket_write($sock, $result, strlen($result));
+							$writes[] = $sock;
 						}
 					}
 				}
+
 				foreach ($writes as $sockKey => $sock) {
+					l("client {$clientKey} write.");
+					// $result = encode("test bb");
+					unset($writes[$sockKey]);
 					//socket_write($sock, $result, strlen($result));
 				}
 			}
