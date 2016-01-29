@@ -1,1 +1,152 @@
-index.html
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title></title>
+    <link rel="stylesheet" href="">
+    <title></title>
+    <style type="text/css" media="screen">
+    body,
+    html {
+        font: 13px/1.5 '微软雅黑', Tahoma, Helvetica, 'SimSun', sans-serif;
+    }
+    
+    .arrow_box {
+        position: relative;
+        background: #82d1ff;
+        border: 2px solid #c2e1f5;
+        padding: 18px;
+        border-radius: 6px;
+        margin-left: 54px;
+        display: inline-block;
+    }
+    
+    .arrow_box:after,
+    .arrow_box:before {
+        right: 100%;
+        top: 18px;
+        border: solid transparent;
+        content: " ";
+        height: 0;
+        width: 0;
+        position: absolute;
+        pointer-events: none;
+    }
+    
+    .arrow_box:after {
+        border-color: rgba(130, 209, 255, 0);
+        border-right-color: #82d1ff;
+        border-width: 9px;
+        margin-top: -9px;
+    }
+    
+    .arrow_box:before {
+        border-color: rgba(194, 225, 245, 0);
+        border-right-color: #c2e1f5;
+        border-width: 12px;
+        margin-top: -12px;
+    }
+    
+    .message-line {
+        margin: 3px;
+    }
+    
+    .user-icon {
+        background-image: url("http://dcloud.oa.com/Public/Avatar/firoyang.png");
+        vertical-align: middle;
+        width: 36px;
+        height: 36px;
+        margin-top: -18px;
+        border-radius: 100%;
+        position: absolute;
+        z-index: 10;
+        background-repeat: no-repeat;
+        background-size: 100% 100%;
+        box-shadow: 0 0 0 1px #dcdcdc;
+        top: 18px;
+        left: -54px;
+    }
+    </style>
+</head>
+
+<body>
+    <div class="message-line">
+        <div class="arrow_box">
+            <span class="message-content"> 范德萨就看房间打开手机房间打开手机饭卡就发大家撒看见反对范德萨爱疯大叔</span>
+            <div class="user-icon"></div>
+        </div>
+    </div>
+    <div class="message-input">
+        <input type="text" id="chat" placeholder="">
+        <input type="button" id="send" value="确认">
+    </div>
+    <article style="clear:both">
+        <form>
+            <input type="text" id="debug_chat" placeholder="type and press enter to chat">
+            <input type="button" id="debug_send" value="send">
+        </form>
+        <textarea rows="10" cols="100" id="messages"></textarea>
+    </article>
+    <script type="text/javascript" charset="utf-8">
+    if ("WebSocket" in window) {
+        var ws;
+        ws = new WebSocket("ws://10.7.124.22:80/");
+        ws.onopen = function() {
+            console.log("Open");
+
+            //heartbeat
+            var id = setInterval(function() {
+                ws.send(JSON.stringify({
+                    'method': 0,
+                    'params': {}
+                }));
+            }, 10000);
+        };
+
+        ws.onmessage = function(evt) {
+            console.log(evt);
+            var data = JSON.parse(evt.data);
+            if (data.result == 0) {
+
+            } else {
+
+            }
+            console.log(data);
+            document.getElementById('messages').innerHTML += JSON.stringify(data) + "\n";
+        };
+
+        ws.onclose = function() {
+            console.log("Socket Closed");
+        };
+
+        ws.onerror = function(evt) {
+            console.log(evt);
+        };
+
+        window.onload = function() {
+            //发送自己的描述
+            document.getElementById('send').onclick = function() {
+                var value = {
+                    action: 'commit_description',
+                    param: document.getElementById('chat').value
+                };
+                ws.send(value);
+                document.getElementById('chat').value = "";
+                return false;
+            };
+            document.getElementById("chat").focus();
+
+        };
+        window.onbeforeunload = function() {
+            ws.onclose = function() {}; // disable onclose handler first
+            ws.close()
+        };
+    } else {
+        document.write("The browser doesn't support WebSocket.");
+    }
+    </script>
+</body>
+
+</html>

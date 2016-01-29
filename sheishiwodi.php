@@ -13,21 +13,67 @@ class SSWDException extends Exception {
 class SSWD {
 	private $openrtx_session_info = null;
 	private $openrtx_user_info = null;
+	private $openrtx_object = null;
+
 	private $cache_data = null;
-	private $openRtxObject = null;
-	private $current_uuid = null;
+
+	private $game_round = 0;
+
+	private $game_turn_uuid_key = null;
+	private $game_turn_uuid_list = array();
+
+	private $game_status = null;
+	private $game_status_flow = array(
+		'waiting' => array('prepare_play'),
+		'prepare_play' => array('playing'),
+		'playing' => array('waiting'),
+	);
+	private $user_status_flow = array(
+		'not_join' => array('joined'),
+		'joined' => array('ready'),
+		'ready' => array('playing'),
+		'playing' => array('dead', 'not_join'),
+		'dead' => array('not_join', 'joined'),
+	);
+
 	public function __construct() {
-		//$this->openRtxObject = new OpenRtx();
+		//$this->openrtx_object = new OpenRtx();
 		//$this->initGame();
 	}
 
+	private function gameStatusFlow($custom_status) {
+		if (array_key_exists($this->game_status, $this->game_status_flow)) {
+			$nextStatus = $this->game_status_flow[$this->game_status][$custom_status];
+		} else {
+			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", invalid status flow", 502);
+		}
+	}
+
+	private function userStatusFlow($current_status, $custom_status) {
+		if (array_key_exists($current_status, $this->user_status_flow)) {
+			$nextStatus = $this->user_status_flow[$current_status][$custom_status];
+		} else {
+			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", invalid status flow", 503);
+		}
+	}
+
+	private function gameTurnFlow() {
+		$next = $this->game_turn_uuid_key + 1;
+		if (array_key_exists($next, $this->game_turn_uuid_list)) {
+			$this->game_turn_uuid_key = $next;
+			return true;
+		} else {
+			return false;
+		}
+	}
+
 	public function initGame() {
-		$params = $this->openRtxObject->getInputParams();
+		$params = $this->openrtx_object->getInputParams();
 		$this->current_uuid = $params['sender'];
 		//获取会话信息
 		$action = "get_session_info";
 		$param = array();
-		$result = $this->openRtxObject->request($action, $param);
+		$result = $this->openrtx_object->request($action, $param);
 		$result = json_decode($result, true);
 		$this->openrtx_session_info = $result;
 
@@ -36,7 +82,7 @@ class SSWD {
 		$param = array(
 			"open_user" => $this->openrtx_session_info['session_info']['member'],
 		);
-		$result = $this->openRtxObject->request($action, $param);
+		$result = $this->openrtx_object->request($action, $param);
 		$result = json_decode($result, true);
 		$this->openrtx_user_info = $result;
 		if (file_exists($this->openrtx_session_info['session_guid'])) {
@@ -57,6 +103,8 @@ class SSWD {
 				$each['role'] = null;
 				//推了谁
 				$each['vote_list'] = array();
+				//描述
+				$each['description_list'] = array();
 
 				$this->cache_data['user_info'][$each['openid']] = $each;
 				$this->cache_data['vote_count'][$each['openid']] = 0;
@@ -64,6 +112,7 @@ class SSWD {
 			//立刻持久化
 			$this->saveCache();
 		}
+		return 0;
 	}
 
 	public function joinGame() {
@@ -73,6 +122,7 @@ class SSWD {
 		} else {
 			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", status='{$this->cache_data['status']}'", 501);
 		}
+		return 0;
 	}
 
 	public function quitGame() {
@@ -82,6 +132,7 @@ class SSWD {
 		} else {
 			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", status='{$this->cache_data['status']}'", 501);
 		}
+		return 0;
 	}
 
 	public function readyGame() {
@@ -91,6 +142,7 @@ class SSWD {
 		} else {
 			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", status='{$this->cache_data['status']}'", 501);
 		}
+		return 0;
 	}
 
 	public function startGame() {
@@ -122,6 +174,7 @@ class SSWD {
 			unset($joined[$randopenid]);
 		}
 		$this->saveCache();
+		return 0;
 	}
 
 	private function saveCache() {
@@ -129,6 +182,7 @@ class SSWD {
 		if (!file_put_contents($this->openrtx_session_info['session_guid'], $data)) {
 			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", file='{$this->openrtx_session_info['session_guid']}'", 500);
 		}
+		return 0;
 	}
 
 	public function vote($openid) {
@@ -148,12 +202,52 @@ class SSWD {
 		} else {
 			throw new SSWDException($this, func_get_args(), "Error Processing " . __METHOD__ . ", status='{$this->cache_data['status']}'", 501);
 		}
+		return 0;
+	}
+
+	public function commitDescription($description) {
+		//@todo 校验用户是不是现在可以发言
+		$openid = $this->game_turn_uuid_list[$this->game_turn_uuid_key];
+		$this->cache_data['user_info'][$openid]['description_list'][$this->game_round] = $description;
+		return 0;
+	}
+
+	private function callClientAction($method_name, $params) {
+
+	}
+
+	private function callServerAction($method_name, $params) {
+		if (!is_array($params)) {
+			$params = array($params);
+		}
+		try {
+			$result = call_user_func_array(array($this, $method), $params);
+		} catch (SSWDException $e) {
+			$result = $e->getCode();
+		}
+		$this->callClientAction();
+		$return = array(
+			'result' => (int) $result,
+			'method' => $method,
+			'data' => array(
+
+			),
+		);
+		return json_encode($return);
 	}
 
 	private function action($method, $args) {
+		if (!is_array($args)) {
+			$args = array($args);
+		}
+		try {
+			$result = call_user_func_array(array($this, $method), $args);
+		} catch (SSWDException $e) {
+			$result = $e->getCode();
+		}
 		$return = array(
-			'result' => 0,
-			'method' => 0,
+			'result' => (int) $result,
+			'method' => $method,
 			'data' => array(
 				1,
 				2,
@@ -193,6 +287,7 @@ class SSWD {
 						$connections[$clientKey] = $client;
 						$connectionsInfo[$clientKey] = array(
 							'connected' => false,
+							'sock' => $client,
 							'uuid' => '',
 							'lastlifetime' => time(),
 						);
