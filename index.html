@@ -82,17 +82,12 @@
         <input type="text" id="chat" placeholder="">
         <input type="button" id="send" value="确认">
     </div>
-    <article style="clear:both">
-        <form>
-            <input type="text" id="debug_chat" placeholder="type and press enter to chat">
-            <input type="button" id="debug_send" value="send">
-        </form>
+    
         <textarea rows="10" cols="100" id="messages"></textarea>
-    </article>
-    <script type="text/javascript" charset="utf-8">
+            <script type="text/javascript" charset="utf-8">
     if ("WebSocket" in window) {
         var ws;
-        ws = new WebSocket("ws://10.7.124.22:80/");
+        ws = new WebSocket("ws://localhost:8080/");
         ws.onopen = function() {
             console.log("Open");
 
@@ -132,7 +127,7 @@
                     action: 'commit_description',
                     param: document.getElementById('chat').value
                 };
-                ws.send(value);
+                ws.send(JSON.stringify(value));
                 document.getElementById('chat').value = "";
                 return false;
             };

@@ -13,30 +13,6 @@ class SSWDException extends Exception {
 	}
 }
 
-class DI {
-	protected $injectList = array();
-	protected function inject($injectObject, $name = null) {
-		$ref = new ReflectionObject($injectObject);
-		if ($name == null) {
-			$name = $ref->getName();
-		}
-		$this->injectList[$name] = $injectObject;
-
-		//尝试反向inject
-		if ($ref->getMethod('inject')) {
-			$injectObject->inject($this);
-		}
-	}
-
-	protected function injection($injectObjectName) {
-		if ($array_key_exists($injectObjectName, $injectList)) {
-			return $this->injectList[$injectObjectName];
-		} else {
-			throw new Exception("injection not exists, name={$injectObjectName}", 100);
-		}
-	}
-}
-
 class SSWD extends DI {
 	private $openrtx_session_info = null;
 	private $openrtx_user_info = null;
@@ -65,15 +41,33 @@ class SSWD extends DI {
 
 	public function __construct() {
 		$this->inject(new WSServer(), 'server_object');
-		$this->inject(new OpenRtx(), 'auth_object');
+		//$this->inject(new OpenRtx(), 'auth_object');
 		//$this->initGame();
+	}
+
+	public function dispatch($sockKey, $buffer) {
+		$buffer = json_decode($buffer, true);
+		$action = $buffer['action'];
+		$params = $buffer['params'];
+		//call action with params
+
+		call_user_func_array(array($this, $action), $params);
 	}
 
 	public function run() {
 		$server = $this->injection('server_object');
-		while ($server->waitConnection()) {
-			$server->receiveData();
-			$server->writeData();
+		while (true) {
+			try {
+				$server->handleConnections();
+				while (false !== ($reads = $server->fetchReads())) {
+					list($sockKey, $buffer) = $reads;
+					var_dump($buffer);
+					//游戏处理客户端请求过来的逻辑
+
+				}
+			} catch (Exception $e) {
+
+			}
 		}
 	}
 
@@ -296,204 +290,4 @@ class SSWD extends DI {
 }
 function l($a) {
 	echo $a . "\n";
-}
-class WSServer {
-	private $host = null;
-	private $port = null;
-	private $server = null;
-	private $connections = array();
-	private $connectionsInfo = array();
-	private $reads = array();
-	private $writes = array();
-	private $select_timeout = 3;
-	public function __construct($host = '0.0.0.0', $port = '80') {
-		$this->host = $host;
-		$this->prot = $port;
-		$this->server = $server = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-		socket_set_option($server, SOL_SOCKET, SO_REUSEADDR, 1);
-		socket_set_option($server, SOL_SOCKET, SO_KEEPALIVE, 1);
-		socket_set_nonblock($server);
-		socket_set_option($server, SOL_SOCKET, SO_RCVTIMEO, array('sec' => 3, 'usec' => 0));
-		socket_set_option($server, SOL_SOCKET, SO_SNDTIMEO, array('sec' => 3, 'usec' => 0));
-		socket_bind($server, '0.0.0.0', 80);
-		socket_listen($server);
-	}
-
-	private function pushConnection($sock) {
-		$clientKey = (int) $client;
-		$this->connections[$clientKey] = $sock;
-		$this->connectionsInfo[$clientKey] = array(
-			'connected' => false,
-			'sock' => $sock,
-			'lastlifetime' => time(),
-			'data' => '',
-		);
-	}
-
-	private function makeWebSocket($sock, &$buffer) {
-		$buf = substr($buffer, strpos($buffer, 'Sec-WebSocket-Key:') + 18);
-		$key = trim(substr($buf, 0, strpos($buf, "\r\n")));
-		$new_key = base64_encode(sha1($key . "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", true));
-		$new_message = "HTTP/1.1 101 Switching Protocols\r\n";
-		$new_message .= "Upgrade: websocket\r\n";
-		$new_message .= "Sec-WebSocket-Version: 13\r\n";
-		$new_message .= "Connection: Upgrade\r\n";
-		$new_message .= "Sec-WebSocket-Accept: " . $new_key . "\r\n\r\n";
-		socket_write($sock, $new_message, strlen($new_message));
-		$connectionsInfo[$clientKey]['connected'] = true;
-		l("client {$clientKey} connected.");
-	}
-
-	private function checkHeartbeat($sock) {
-		$clientKey = (int) $sock;
-		if (time() - $this->connectionsInfo[$clientKey]['lastlifetime'] > $this->heartbeat_timeout) {
-			l("client {$clientKey} lifetime > {$this->heartbeat_timeout}.");
-			socket_close($sock);
-			unset($this->connectionsInfo[$clientKey], $this->connections[$clientKey]);
-		} else {
-			$this->connectionsInfo[$clientKey]['lastlifetime'] = time();
-		}
-	}
-
-	private function disconnect() {
-		socket_close($sock);
-		unset($connectionsInfo[$clientKey], $connections[$clientKey]);
-	}
-
-	private function receiveData(&$buffer) {
-		$sock = each($this->reads);
-		if (false === $sock) {
-			return false;
-		}
-
-		$length = socket_recv($sock, $buffer, 2048, 0);
-		$clientKey = (int) $sock;
-
-		l("client {$clientKey} selected. length = {$length}");
-		if ($length < 7) {
-			l("client {$clientKey} length < 7.");
-			$this->disconnect($sock);
-			l("client {$clientKey} force disconnect");
-			return false;
-		}
-
-		$buffer = json_decode($this->decode($buffer), true);
-		if ($buffer === false) {
-			l("client {$clientKey} decode failed");
-			$this->disconnect($sock);
-			l("client {$clientKey} force disconnect");
-		}
-		return $length;
-	}
-
-	private function writeData() {
-		$sock = each($this->writes);
-		if (false === $sock) {
-			return false;
-		}
-		$buffer = $this->encode($buffer);
-		$length = socket_write($sock, $buffer, strlen($buffer));
-		$clientKey = (int) $sock;
-		l("write to client {$clientKey}, length {$length}");
-		return $length;
-	}
-
-	public function waitConnection() {
-		$this->reads = $this->connections;
-		$this->reads[(int) $this->server] = $this->server;
-		$except = null;
-		$error = socket_select($this->reads, $this->writes, $except, $this->select_timeout);
-		if (0 !== ($errorcode = socket_last_error())) {
-			l($errorcode);
-			l($socket_strerror($errorcode));
-		}
-	}
-
-	public function solveReads() {
-		foreach ($this->reads as $sockKey => $sock) {
-			if ($sock === $this->server) {
-				$client = socket_accept($this->server);
-				$this->pushConnection($client);
-				l("client {$clientKey} comming.");
-				continue;
-			} else {
-				$length = $this->receiveData($sock, $buffer);
-				if ($this->connectionsInfo[$clientKey]['connected'] === true) {
-					l("client {$clientKey} is now reading.");
-					$data = $buffer;
-					if ($data === false) {
-						l("client {$clientKey} data decode failed. data = '{$data}'");
-						continue;
-					}
-					if ($data['method'] === 0) {
-						$result = json_encode(array('method' => 0, 'params' => array()));
-					} else {
-						call_user_func_array(array($this->injection('SSWD'), $data['method']), $data['params']);
-					}
-				} else {
-					//建立websocket连接
-					$this->makeWebSocket($sock, $buffer);
-				}
-			}
-		}
-	}
-
-	public function solveWrites() {
-
-	}
-
-	public function run() {
-		$buffer = null;
-		$connectionsInfo = $this->connectionsInfo = array();
-		$connections = $this->connections = array();
-		$reads = $this->reads = array();
-		$writes = $this->writes = array();
-		while (true) {
-			l("loop.." . time());
-			$reads = $this->connections;
-			$writes = $this->writes;
-			$reads[(int) $server] = $server;
-			$error = socket_select($reads, $writes, $except = NULL, 3);
-			$errorcode = socket_last_error();
-			$errormsg = socket_strerror($errorcode);
-			l($errorcode);
-			l($errormsg);
-			if ($error) {
-				//var_dump(empty($reads), empty($writes));
-
-				foreach ($writes as $sockKey => $sock) {
-					l("client {$clientKey} write.");
-					// $result = encode("test bb");
-					unset($writes[$sockKey]);
-					//socket_write($sock, $result, strlen($result));
-				}
-			}
-		}
-	}
-	private function decode($frame) {
-		$len = ord($frame[1]) & 127;
-		if ($len === 126) {
-			$ofs = 8;
-		} elseif ($len === 127) {
-			$ofs = 14;
-		} else {
-			$ofs = 6;
-		}
-		$text = '';
-		for ($i = $ofs; $i < strlen($frame); $i++) {
-			$text .= $frame[$i] ^ $frame[$ofs - 4 + ($i - $ofs) % 4];
-		}
-		return $text;
-	}
-	private function encode($text) {
-		$b = 129;
-		$len = strlen($text);
-		if ($len < 126) {
-			return pack('CC', $b, $len) . $text;
-		} elseif ($len < 65536) {
-			return pack('CCn', $b, 126, $len) . $text;
-		} else {
-			return pack('CCNN', $b, 127, 0, $len) . $text;
-		}
-	}
 }

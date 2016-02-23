@@ -1,26 +1,32 @@
 <?php
 define('TMP', '.');
-class InjectBase {
-	private $map = array();
-	private static $singleton = null;
-	public function __construct() {
 
-	}
-	static public function getInstance() {
-		if (self::$singleton === null) {
-			self::$singleton = new InjectBase();
+include 'WSServer.php';
+class DI {
+	protected $injectList = array();
+	protected function inject($injectObject, $name = null) {
+		$ref = new ReflectionObject($injectObject);
+		if ($name == null) {
+			$name = $ref->getName();
 		}
-		return self::$singleton;
-	}
-	public function inject($baseObject, $object, $name = null) {
-		if ($name === null) {
-			$name = $object->getName();
+		if (array_key_exists($name, $this->injectList)) {
+			return false;
 		}
-		$this->map[$baseObject->getName()][$name] = $object;
+		$this->injectList[$name] = $injectObject;
+
+		//尝试反向inject
+		if ($ref->getMethod('inject')) {
+			$injectObject->inject($this);
+		}
+		return true;
 	}
 
-	public function get($baseObject, $objectName) {
-		return $this->map[$baseObject->getName()][$objectName];
+	protected function injection($injectObjectName) {
+		if (array_key_exists($injectObjectName, $this->injectList)) {
+			return $this->injectList[$injectObjectName];
+		} else {
+			throw new Exception("injection not exists, name={$injectObjectName}", 100);
+		}
 	}
 }
 
